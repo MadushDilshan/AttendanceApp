@@ -115,7 +115,7 @@ export async function generatePaysheet(params: GeneratePaysheetParams) {
   let skippedDays = 0;
 
   for (const record of records) {
-    const populated = record as IAttendanceRecord & {
+    const populated = record as unknown as IAttendanceRecord & {
       employeeId: { _id: mongoose.Types.ObjectId; name: string };
     };
 

@@ -16,7 +16,7 @@ export function validate(schema: ZodSchema, part: RequestPart = 'body') {
       return;
     }
     // Replace the raw input with the parsed (and coerced) value
-    (req as Record<string, unknown>)[part] = result.data;
+    (req as unknown as Record<string, unknown>)[part] = result.data;
     next();
   };
 }
