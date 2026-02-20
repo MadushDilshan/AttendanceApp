@@ -1,0 +1,686 @@
+openapi: 3.1.0
+info:
+  title: AttendanceApp API
+  version: 1.0.0
+  description: |
+    REST API for the QR-based employee attendance and payroll system.
+    All endpoints (except /auth/login) require a valid Bearer JWT.
+    All communication MUST use HTTPS/TLS 1.2+.
+
+servers:
+  - url: https://attendanceapp-api.onrender.com/api
+    description: Production (Render.com)
+  - url: http://localhost:3000/api
+    description: Local development
+
+tags:
+  - name: auth
+    description: Authentication — login, refresh, logout
+  - name: attendance
+    description: Employee check-in / check-out and sync
+  - name: admin-employees
+    description: Owner — employee account management
+  - name: admin-attendance
+    description: Owner — attendance monitoring and manual adjustments
+  - name: admin-workplace
+    description: Owner — workplace location and QR management
+  - name: admin-paysheets
+    description: Owner — paysheet generation and export
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code:    { type: string }
+        message: { type: string }
+        details: { type: object }
+
+    Employee:
+      type: object
+      properties:
+        id:          { type: string }
+        name:        { type: string }
+        email:       { type: string, format: email }
+        role:        { type: string, enum: [employee, admin] }
+        status:      { type: string, enum: [active, inactive] }
+        workplaceId: { type: string }
+        createdAt:   { type: string, format: date-time }
+
+    AttendanceRecord:
+      type: object
+      properties:
+        id:                   { type: string }
+        employeeId:           { type: string }
+        date:                 { type: string, format: date, example: "2026-02-13" }
+        checkInAt:            { type: string, format: date-time }
+        checkOutAt:           { type: string, format: date-time, nullable: true }
+        status:               { type: string, enum: [open, closed, incomplete] }
+        regularHours:         { type: number, nullable: true }
+        overtimeHoursMorning: { type: number, nullable: true }
+        overtimeHoursEvening: { type: number, nullable: true }
+        isManuallyAdjusted:   { type: boolean }
+        adjustmentNote:       { type: string, nullable: true }
+
+    PaysheetEntry:
+      type: object
+      properties:
+        employeeId:           { type: string }
+        employeeName:         { type: string }
+        date:                 { type: string, format: date }
+        checkInAt:            { type: string, format: date-time }
+        checkOutAt:           { type: string, format: date-time }
+        regularHours:         { type: number }
+        overtimeHoursMorning: { type: number }
+        overtimeHoursEvening: { type: number }
+        regularPay:           { type: number, example: 1000 }
+        overtimePay:          { type: number }
+        totalPay:             { type: number }
+        isManuallyAdjusted:   { type: boolean }
+        recordStatus:         { type: string, enum: [included, skipped_incomplete] }
+
+    Paysheet:
+      type: object
+      properties:
+        id:              { type: string }
+        generatedBy:     { type: string }
+        generatedAt:     { type: string, format: date-time }
+        periodStart:     { type: string, format: date }
+        periodEnd:       { type: string, format: date }
+        entries:
+          type: array
+          items: { $ref: '#/components/schemas/PaysheetEntry' }
+        totals:
+          type: object
+          properties:
+            totalRegularPay:  { type: number }
+            totalOvertimePay: { type: number }
+            totalPayable:     { type: number }
+            skippedDays:      { type: integer }
+        status: { type: string, enum: [draft, processed] }
+
+    Workplace:
+      type: object
+      properties:
+        id:                   { type: string }
+        name:                 { type: string }
+        location:
+          type: object
+          properties:
+            lat: { type: number }
+            lng: { type: number }
+        geofenceRadiusMetres: { type: integer, default: 100 }
+        updatedAt:            { type: string, format: date-time }
+
+security:
+  - BearerAuth: []
+
+paths:
+
+  # ─── AUTH ────────────────────────────────────────────────────────────────────
+
+  /auth/login:
+    post:
+      tags: [auth]
+      summary: Authenticate and receive tokens
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email:    { type: string, format: email }
+                password: { type: string, minLength: 8 }
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  accessToken:  { type: string }
+                  employee:     { $ref: '#/components/schemas/Employee' }
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+                description: HttpOnly refresh token cookie (web); also returned in body for mobile
+        '401':
+          description: Invalid credentials
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /auth/refresh:
+    post:
+      tags: [auth]
+      summary: Issue new access token using refresh token
+      security: []
+      description: |
+        Mobile: send refreshToken in request body.
+        Web: send via HttpOnly cookie (automatically included by browser).
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                refreshToken: { type: string, description: "Mobile only — omit for web (uses cookie)" }
+      responses:
+        '200':
+          description: New access token issued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  accessToken: { type: string }
+        '401':
+          description: Refresh token invalid or expired
+
+  /auth/logout:
+    post:
+      tags: [auth]
+      summary: Invalidate refresh token
+      responses:
+        '204':
+          description: Logged out successfully
+
+  # ─── ATTENDANCE (EMPLOYEE) ────────────────────────────────────────────────────
+
+  /attendance/today:
+    get:
+      tags: [attendance]
+      summary: Get today's attendance record for the authenticated employee
+      responses:
+        '200':
+          description: Today's record (null if no check-in yet)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  record:
+                    oneOf:
+                      - { $ref: '#/components/schemas/AttendanceRecord' }
+                      - { type: 'null' }
+
+  /attendance/checkin:
+    post:
+      tags: [attendance]
+      summary: Record employee check-in via QR scan
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [qrToken, deviceTimestamp, location]
+              properties:
+                qrToken:
+                  type: string
+                  description: UUID from the workplace QR code
+                deviceTimestamp:
+                  type: string
+                  format: date-time
+                  description: Device time at moment of scan (for audit; server time is authoritative)
+                location:
+                  type: object
+                  required: [lat, lng]
+                  properties:
+                    lat: { type: number }
+                    lng: { type: number }
+      responses:
+        '201':
+          description: Check-in recorded successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  record:         { $ref: '#/components/schemas/AttendanceRecord' }
+                  serverCheckInAt: { type: string, format: date-time }
+        '400':
+          description: Invalid QR token or already checked in today
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403':
+          description: Employee not assigned to this workplace
+
+  /attendance/checkout:
+    post:
+      tags: [attendance]
+      summary: Record employee check-out via QR scan
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [qrToken, deviceTimestamp, location]
+              properties:
+                qrToken:         { type: string }
+                deviceTimestamp: { type: string, format: date-time }
+                location:
+                  type: object
+                  properties:
+                    lat: { type: number }
+                    lng: { type: number }
+      responses:
+        '200':
+          description: Check-out recorded; returns closed record with pay summary
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  record:            { $ref: '#/components/schemas/AttendanceRecord' }
+                  serverCheckOutAt:  { type: string, format: date-time }
+                  summary:
+                    type: object
+                    properties:
+                      totalHours:           { type: number }
+                      regularHours:         { type: number }
+                      overtimeHoursMorning: { type: number }
+                      overtimeHoursEvening: { type: number }
+        '400':
+          description: No open check-in found for today or invalid QR
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /attendance/sync:
+    post:
+      tags: [attendance]
+      summary: Bulk sync offline attendance events
+      description: |
+        Used when the mobile app reconnects after offline period.
+        Each event is processed in order; duplicate events return 200 with a conflict flag.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [events]
+              properties:
+                events:
+                  type: array
+                  items:
+                    type: object
+                    required: [type, qrToken, deviceTimestamp, location, localId]
+                    properties:
+                      localId:         { type: string, description: "Client-generated UUID for dedup" }
+                      type:            { type: string, enum: [checkin, checkout] }
+                      qrToken:         { type: string }
+                      deviceTimestamp: { type: string, format: date-time }
+                      location:
+                        type: object
+                        properties:
+                          lat: { type: number }
+                          lng: { type: number }
+      responses:
+        '200':
+          description: Sync results per event
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  results:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        localId: { type: string }
+                        status:  { type: string, enum: [synced, conflict, error] }
+                        record:  { $ref: '#/components/schemas/AttendanceRecord' }
+                        message: { type: string }
+
+  # ─── ADMIN — EMPLOYEES ───────────────────────────────────────────────────────
+
+  /admin/employees:
+    get:
+      tags: [admin-employees]
+      summary: List all employees
+      parameters:
+        - in: query
+          name: status
+          schema: { type: string, enum: [active, inactive] }
+        - in: query
+          name: workplaceId
+          schema: { type: string }
+      responses:
+        '200':
+          description: Employee list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  employees:
+                    type: array
+                    items: { $ref: '#/components/schemas/Employee' }
+    post:
+      tags: [admin-employees]
+      summary: Create a new employee account
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, email, password, role]
+              properties:
+                name:        { type: string }
+                email:       { type: string, format: email }
+                password:    { type: string, minLength: 8 }
+                role:        { type: string, enum: [employee, admin] }
+                workplaceId: { type: string }
+      responses:
+        '201':
+          description: Employee created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  employee: { $ref: '#/components/schemas/Employee' }
+        '409':
+          description: Email already in use
+
+  /admin/employees/{id}:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: string }
+    put:
+      tags: [admin-employees]
+      summary: Update employee details
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:        { type: string }
+                role:        { type: string, enum: [employee, admin] }
+                workplaceId: { type: string }
+      responses:
+        '200':
+          description: Employee updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  employee: { $ref: '#/components/schemas/Employee' }
+    patch:
+      tags: [admin-employees]
+      summary: Change employee active/inactive status
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [active, inactive] }
+      responses:
+        '200':
+          description: Status updated
+
+  # ─── ADMIN — ATTENDANCE ───────────────────────────────────────────────────────
+
+  /admin/attendance:
+    get:
+      tags: [admin-attendance]
+      summary: Query attendance records
+      parameters:
+        - in: query
+          name: employeeId
+          schema: { type: string }
+        - in: query
+          name: startDate
+          required: true
+          schema: { type: string, format: date }
+        - in: query
+          name: endDate
+          required: true
+          schema: { type: string, format: date }
+        - in: query
+          name: status
+          schema: { type: string, enum: [open, closed, incomplete] }
+      responses:
+        '200':
+          description: Attendance records matching query
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  records:
+                    type: array
+                    items: { $ref: '#/components/schemas/AttendanceRecord' }
+                  totalCount: { type: integer }
+
+  /admin/attendance/today:
+    get:
+      tags: [admin-attendance]
+      summary: Today's attendance overview for all employees
+      responses:
+        '200':
+          description: All employees with today's status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  date: { type: string, format: date }
+                  overview:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        employee: { $ref: '#/components/schemas/Employee' }
+                        record:
+                          oneOf:
+                            - { $ref: '#/components/schemas/AttendanceRecord' }
+                            - { type: 'null' }
+                        displayStatus: { type: string, enum: [checked_in, checked_out, absent, incomplete] }
+
+  /admin/attendance/{id}/close:
+    patch:
+      tags: [admin-attendance]
+      summary: Manually close an incomplete attendance record
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [checkOutAt, adjustmentNote]
+              properties:
+                checkOutAt:     { type: string, format: date-time }
+                adjustmentNote: { type: string, minLength: 10 }
+      responses:
+        '200':
+          description: Record closed with pay calculation applied
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  record: { $ref: '#/components/schemas/AttendanceRecord' }
+
+  # ─── ADMIN — WORKPLACE ────────────────────────────────────────────────────────
+
+  /admin/workplace:
+    get:
+      tags: [admin-workplace]
+      summary: Get workplace configuration
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  workplace: { $ref: '#/components/schemas/Workplace' }
+    put:
+      tags: [admin-workplace]
+      summary: Update workplace name, location, or geofence radius
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:                 { type: string }
+                location:
+                  type: object
+                  properties:
+                    lat: { type: number }
+                    lng: { type: number }
+                geofenceRadiusMetres: { type: integer, minimum: 10, maximum: 5000 }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  workplace: { $ref: '#/components/schemas/Workplace' }
+
+  /admin/workplace/qr:
+    get:
+      tags: [admin-workplace]
+      summary: Get workplace QR code image (PNG) for printing
+      responses:
+        '200':
+          content:
+            image/png:
+              schema:
+                type: string
+                format: binary
+
+  /admin/workplace/qr/rotate:
+    post:
+      tags: [admin-workplace]
+      summary: Regenerate QR code token (invalidates existing QR)
+      description: Use if QR code is compromised. All employees must rescan the new QR.
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+
+  # ─── ADMIN — PAYSHEETS ────────────────────────────────────────────────────────
+
+  /admin/paysheets/generate:
+    post:
+      tags: [admin-paysheets]
+      summary: Generate a paysheet for selected employees and date range
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [periodStart, periodEnd, employeeIds]
+              properties:
+                periodStart:  { type: string, format: date }
+                periodEnd:    { type: string, format: date }
+                employeeIds:
+                  type: array
+                  items: { type: string }
+                  description: Employee IDs to include; send empty array for all employees
+      responses:
+        '201':
+          description: Paysheet generated (draft status)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  paysheet: { $ref: '#/components/schemas/Paysheet' }
+
+  /admin/paysheets/{id}:
+    get:
+      tags: [admin-paysheets]
+      summary: Get a paysheet by ID
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  paysheet: { $ref: '#/components/schemas/Paysheet' }
+    patch:
+      tags: [admin-paysheets]
+      summary: Mark paysheet as processed
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [processed] }
+      responses:
+        '200':
+          description: Status updated
+
+  /admin/paysheets/{id}/export:
+    get:
+      tags: [admin-paysheets]
+      summary: Export paysheet as PDF or CSV
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+        - in: query
+          name: format
+          required: true
+          schema: { type: string, enum: [pdf, csv] }
+      responses:
+        '200':
+          description: File download
+          content:
+            application/pdf:
+              schema: { type: string, format: binary }
+            text/csv:
+              schema: { type: string, format: binary }

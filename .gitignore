@@ -1,0 +1,79 @@
+# ─── Node.js (backend + web) ────────────────────────────────────────────────
+node_modules/
+dist/
+build/
+.cache/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ─── Environment variables ─────────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+.env.development
+.env.production
+!.env.example
+
+# ─── TypeScript build output ───────────────────────────────────────────────
+*.js.map
+*.d.ts.map
+
+# ─── Flutter / Dart ─────────────────────────────────────────────────────────
+android/.dart_tool/
+android/.flutter-plugins
+android/.flutter-plugins-dependencies
+android/.pub-cache/
+android/.pub/
+android/build/
+android/android/app/google-services.json
+android/ios/
+android/linux/
+android/macos/
+android/web/
+android/windows/
+*.iml
+.gradle/
+local.properties
+GeneratedPluginRegistrant.dart
+android/android/.gradle/
+android/android/app/debug/
+android/android/app/profile/
+android/android/app/release/
+
+# ─── React / Vite ──────────────────────────────────────────────────────────
+web/dist/
+web/.vite/
+
+# ─── Coverage ──────────────────────────────────────────────────────────────
+coverage/
+lcov.info
+*.lcov
+
+# ─── IDE ───────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# ─── OS ────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ─── Secrets / keys ────────────────────────────────────────────────────────
+*.pem
+*.key
+*.p12
+*.keystore
+google-services.json
+GoogleService-Info.plist
+
+# ─── Testing artifacts ─────────────────────────────────────────────────────
+*.tmp
+junit.xml
+test-results/
