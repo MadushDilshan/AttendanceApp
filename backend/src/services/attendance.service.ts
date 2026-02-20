@@ -3,7 +3,7 @@ import { AttendanceRecord, IAttendanceRecord } from '../models/AttendanceRecord'
 import { lookupWorkplaceByQrToken } from './geofence.service';
 import { calculatePay } from './payroll.service';
 import { createError } from '../middleware/errorHandler';
-import { getDateString, todayUTC } from '../utils/dateUtils';
+import { todayUTC } from '../utils/dateUtils';
 
 export interface CheckInParams {
   employeeId: string;
