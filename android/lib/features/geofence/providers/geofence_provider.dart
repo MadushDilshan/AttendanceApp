@@ -45,10 +45,20 @@ final currentPositionProvider = StreamProvider<Position?>((ref) async* {
     return;
   }
 
+  // Use medium accuracy (WiFi + cell towers) for fast initial fix
+  // High accuracy (GPS satellites) is slow; 100m geofence doesn't need it
+  try {
+    final initial = await Geolocator.getCurrentPosition(
+      desiredAccuracy: LocationAccuracy.medium,
+      timeLimit: const Duration(seconds: 10),
+    );
+    yield initial;
+  } catch (_) {}
+
   yield* Geolocator.getPositionStream(
     locationSettings: const LocationSettings(
-      accuracy: LocationAccuracy.high,
-      distanceFilter: 5,
+      accuracy: LocationAccuracy.medium,
+      distanceFilter: 10,
     ),
   ).map((p) => p);
 });

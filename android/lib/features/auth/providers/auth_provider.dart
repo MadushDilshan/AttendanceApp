@@ -1,4 +1,7 @@
+import 'dart:convert';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:freezed_annotation/freezed_annotation.dart';
 
 import '../../../core/network/dio_client.dart';
@@ -9,6 +12,12 @@ import '../../geofence/providers/geofence_provider.dart';
 import '../../offline_queue/providers/sync_provider.dart';
 
 part 'auth_provider.freezed.dart';
+
+const _kEmployeeKey = 'employee_json';
+
+const _secureStorage = FlutterSecureStorage(
+  aOptions: AndroidOptions(encryptedSharedPreferences: true),
+);
 
 @freezed
 class AuthState with _$AuthState {
@@ -23,12 +32,18 @@ class AuthState with _$AuthState {
 class AuthNotifier extends AsyncNotifier<AuthState> {
   @override
   Future<AuthState> build() async {
-    // Check if a token exists on startup
     final token = await TokenStorage.getAccessToken();
     if (token != null) {
-      // Token exists, try to restore session
-      // (A real app could validate the token or decode it)
-      return const AuthState(isAuthenticated: true);
+      // Restore saved employee data
+      final employeeJson = await _secureStorage.read(key: _kEmployeeKey);
+      Employee? employee;
+      if (employeeJson != null) {
+        try {
+          employee = Employee.fromJson(
+              jsonDecode(employeeJson) as Map<String, dynamic>);
+        } catch (_) {}
+      }
+      return AuthState(isAuthenticated: true, employee: employee);
     }
     return const AuthState();
   }
@@ -41,6 +56,10 @@ class AuthNotifier extends AsyncNotifier<AuthState> {
       await TokenStorage.saveTokens(
         access: result.accessToken,
         refresh: result.refreshToken,
+      );
+      await _secureStorage.write(
+        key: _kEmployeeKey,
+        value: jsonEncode(result.employee.toJson()),
       );
 
       // Invalidate all cached data from previous user
@@ -60,6 +79,7 @@ class AuthNotifier extends AsyncNotifier<AuthState> {
   Future<void> logout() async {
     final repo = ref.read(authRepositoryProvider);
     await repo.logout();
+    await _secureStorage.delete(key: _kEmployeeKey);
     state = const AsyncData(AuthState());
   }
 }
