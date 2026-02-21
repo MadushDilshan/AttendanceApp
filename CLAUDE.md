@@ -13,8 +13,6 @@ android/   Flutter 3.x employee mobile app
 specs/     SpecKit design artifacts (spec.md, plan.md, tasks.md)
 ```
 
-The CLAUDE.md project structure listing (`frontend/`, `tests/`) is wrong — the correct dirs are `web/` and `android/`.
-
 ---
 
 ## Backend (`backend/`)
@@ -44,15 +42,27 @@ npm run lint
 npm run lint:fix
 ```
 
+**Debug scripts** (at `backend/` root, run with `node`):
+- `get-qr-token.js` — fetch a workplace QR token for manual testing
+- `check-attendance.js` — inspect raw attendance records
+- `check-db.js` — verify DB connection and collection counts
+
 **Architecture:**
 
-Request flow: `route → validate(zodSchema) middleware → authenticate/authorize middleware → service function → Mongoose model`
+Request flow: `route → validate(zodSchema) → authenticate → authorize → service → Mongoose model`
 
 - `src/config/env.ts` — Zod-validated env; import `env` everywhere instead of `process.env`
 - `src/middleware/authenticate.ts` — verifies Bearer JWT, attaches `req.employee`
+- `src/middleware/authorize.ts` — RBAC; checks `req.employee.role` against allowed roles
 - `src/middleware/validate.ts` — Zod body validation, returns 400 on failure
+- `src/middleware/errorHandler.ts` — global error handler; mount last in `index.ts`
+- `src/utils/dateUtils.ts` — shared date helpers (Sri Lanka offset, range helpers)
 - `src/services/` — all business logic lives here; routes are thin
 - `src/scripts/markIncomplete.ts` — cron at `00:05 UTC` marks stale `open` records as `incomplete`
+
+**Route structure:**
+- Public routes: `auth.routes.ts`, `attendance.routes.ts`, `workplace.routes.ts`
+- Admin-only routes (under `src/routes/admin/`): `employees.routes.ts`, `attendance.routes.ts`, `paysheets.routes.ts`, `workplace.routes.ts` — all protected by `authorize('admin')`
 
 **Auth flow:**
 - `POST /api/auth/login` returns `accessToken` (15 min JWT) in body **and** `refreshToken` in body + HttpOnly cookie
@@ -70,6 +80,8 @@ Request flow: `route → validate(zodSchema) middleware → authenticate/authori
 - Regular: flat Rs 1,000/day if any overlap with 08:00–17:00 local
 - Overtime: Rs 160/hr for time outside 08:00–17:00, rounded to nearest 30 min
 - Constants are in `PAY_RATES` — change here **and** in `android/lib/core/constants/api_constants.dart` together
+
+**Export** (`src/services/export.service.ts`): generates PDF and CSV paysheets using `pdfkit` and `json2csv`.
 
 ---
 

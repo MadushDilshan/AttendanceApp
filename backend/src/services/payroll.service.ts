@@ -12,10 +12,11 @@ import {
 
 // Pay rate constants — change here and in app_config.dart together
 export const PAY_RATES = {
-  REGULAR_DAY_RATE: 1000,   // Rs per day (flat)
-  OVERTIME_RATE: 160,        // Rs per hour
-  REGULAR_START_HOUR: 8,    // 08:00 Sri Lanka time
-  REGULAR_END_HOUR: 17,     // 17:00 Sri Lanka time (5 PM)
+  REGULAR_DAY_RATE: 1000,        // Rs per day (reference rate)
+  REGULAR_EFFECTIVE_HOURS: 9,   // 08:00–17:00 = 9 hours
+  OVERTIME_RATE: 160,             // Rs per hour
+  REGULAR_START_HOUR: 8,         // 08:00 Sri Lanka time
+  REGULAR_END_HOUR: 17,          // 17:00 Sri Lanka time (5 PM)
   OT_ROUNDING_MINS: 30,
 } as const;
 
@@ -67,17 +68,21 @@ export function calculatePay(checkInAt: Date, checkOutAt: Date): PayCalculationR
   const overtimeHoursMorning = Math.round(totalOTHours * morningRatio * 2) / 2;
   const overtimeHoursEvening = Math.round((totalOTHours - overtimeHoursMorning) * 2) / 2;
 
-  // Regular day pay: only if employee worked any regular hours
-  const regularPay = regularHours > 0 ? PAY_RATES.REGULAR_DAY_RATE : 0;
-  const overtimePay = totalOTHours * PAY_RATES.OVERTIME_RATE;
+  // Round regular hours to nearest 30 min (same as overtime)
+  const regularHoursRounded = roundToHalfHour(regularHours * 60) / 60;
+
+  // Regular pay: proportional — Rs 111.11/hr (1,000 ÷ 9 hours)
+  const regularHourlyRate = PAY_RATES.REGULAR_DAY_RATE / PAY_RATES.REGULAR_EFFECTIVE_HOURS;
+  const regularPay = Math.round(regularHoursRounded * regularHourlyRate * 100) / 100;
+  const overtimePay = Math.round(totalOTHours * PAY_RATES.OVERTIME_RATE * 100) / 100;
 
   return {
-    regularHours: Math.round(regularHours * 100) / 100,
+    regularHours: regularHoursRounded,
     overtimeHoursMorning,
     overtimeHoursEvening,
     regularPay,
-    overtimePay: Math.round(overtimePay * 100) / 100,
-    totalPay: regularPay + Math.round(overtimePay * 100) / 100,
+    overtimePay,
+    totalPay: regularPay + overtimePay,
   };
 }
 

@@ -5,8 +5,8 @@ const String kApiBaseUrl = String.fromEnvironment(
   defaultValue: 'http://172.20.10.2:3000/api', // Mobile hotspot IP
 );
 
-const Duration kConnectTimeout = Duration(seconds: 15);
-const Duration kReceiveTimeout = Duration(seconds: 20);
+const Duration kConnectTimeout = Duration(seconds: 60);
+const Duration kReceiveTimeout = Duration(seconds: 60);
 
 // Geofencing
 const double kDefaultGeofenceRadiusMetres = 100.0;
